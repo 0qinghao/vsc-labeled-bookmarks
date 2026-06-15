@@ -1687,6 +1687,191 @@ export class Main implements BookmarkDataProvider, BookmarManager {
         );
     }
 
+    // ──── Export bookmarks ────
+    public async actionExportBookmarks() {
+        // Build export data object
+        const exportData: any = {
+            $schema: "vsc-labeled-bookmarks-export",
+            version: 1,
+            groups: this.groups.map(g => ({
+                name: g.name,
+                color: g.color,
+                shape: g.shape,
+                iconText: g.iconText
+            })),
+            bookmarks: this.bookmarks.map(b => ({
+                fsPath: b.fsPath,
+                lineNumber: b.lineNumber,
+                characterNumber: b.characterNumber,
+                label: b.label,
+                lineText: b.lineText,
+                isLineNumberChanged: b.isLineNumberChanged,
+                groupName: b.group.name
+            })),
+            activeGroup: this.activeGroup.name,
+            hideInactiveGroups: this.hideInactiveGroups,
+            hideAll: this.hideAll
+        };
+
+        // Default to .vscode/labeled-bookmarks.json in workspace root
+        const workspaceFolders = vscode.workspace.workspaceFolders;
+        let defaultUri: vscode.Uri | undefined;
+        if (workspaceFolders && workspaceFolders.length > 0) {
+            defaultUri = vscode.Uri.joinPath(workspaceFolders[0].uri, '.vscode', 'labeled-bookmarks.json');
+        }
+
+        const uri = await vscode.window.showSaveDialog({
+            defaultUri: defaultUri,
+            filters: {
+                'JSON files': ['json']
+            },
+            title: 'Export Bookmarks'
+        });
+
+        if (!uri) {
+            return; // User cancelled
+        }
+
+        try {
+            const json = JSON.stringify(exportData, null, 2);
+            await vscode.workspace.fs.writeFile(uri, Buffer.from(json, 'utf8'));
+            vscode.window.showInformationMessage(`Bookmarks exported to ${uri.fsPath}`);
+        } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to export bookmarks: ${e.message}`);
+        }
+    }
+
+    // ──── Import bookmarks ────
+    public async actionImportBookmarks() {
+        const uri = await vscode.window.showOpenDialog({
+            canSelectMany: false,
+            filters: {
+                'JSON files': ['json']
+            },
+            title: 'Import Bookmarks'
+        });
+
+        if (!uri || uri.length === 0) {
+            return; // User cancelled
+        }
+
+        try {
+            const content = await vscode.workspace.fs.readFile(uri[0]);
+            const data = JSON.parse(Buffer.from(content).toString('utf8'));
+
+            // Validate file format
+            if (data.$schema !== "vsc-labeled-bookmarks-export" || !data.version) {
+                vscode.window.showErrorMessage('Invalid bookmark export file format');
+                return;
+            }
+
+            // Ask user whether to replace or merge
+            const replaceChoice = await vscode.window.showQuickPick(
+                [
+                    { label: 'Replace', description: 'Replace all existing bookmarks and groups' },
+                    { label: 'Merge', description: 'Keep existing bookmarks and add imported ones' }
+                ],
+                { placeHolder: 'How do you want to import bookmarks?' }
+            );
+
+            if (!replaceChoice) {
+                return; // User cancelled
+            }
+
+            const replaceExisting = replaceChoice.label === 'Replace';
+
+            if (replaceExisting) {
+                // Clear all existing bookmarks and groups
+                this.bookmarks.forEach(b => {
+                    this.tempDocumentBookmarks.delete(b.fsPath);
+                    this.tempDocumentDecorations.delete(b.fsPath);
+                    this.tempGroupBookmarks.delete(b.group);
+                    const deco = b.getDecoration();
+                    if (deco) this.handleDecorationRemoved(deco);
+                });
+                this.groups.forEach(g => g.removeDecorations());
+                this.bookmarks = [];
+                this.groups = [];
+                this.tempDocumentBookmarks.clear();
+                this.tempGroupBookmarks.clear();
+                this.tempDocumentDecorations.clear();
+            }
+
+            // Import groups (reuse existing ones by name)
+            const groupMap = new Map<string, Group>();
+            if (data.groups && Array.isArray(data.groups)) {
+                for (const sg of data.groups) {
+                    let existing = this.groups.find(g => g.name === sg.name);
+                    if (existing) {
+                        groupMap.set(sg.name, existing);
+                    } else {
+                        const group = new Group(sg.name, sg.color, sg.shape, sg.iconText, this.decorationFactory);
+                        this.addNewGroup(group);
+                        groupMap.set(sg.name, group);
+                    }
+                }
+                this.groups.sort(Group.sortByName);
+            }
+
+            // Import bookmarks
+            if (data.bookmarks && Array.isArray(data.bookmarks)) {
+                for (const sb of data.bookmarks) {
+                    const group = groupMap.get(sb.groupName) || this.activeGroup;
+
+                    // In Merge mode, skip duplicates at the same location
+                    if (!replaceExisting) {
+                        const exists = this.bookmarks.some(b =>
+                            b.fsPath === sb.fsPath &&
+                            b.lineNumber === sb.lineNumber &&
+                            b.group === group
+                        );
+                        if (exists) {
+                            continue;
+                        }
+                    }
+
+                    const bookmark = new Bookmark(
+                        sb.fsPath,
+                        sb.lineNumber,
+                        sb.characterNumber,
+                        sb.label,
+                        sb.lineText,
+                        group,
+                        this.decorationFactory
+                    );
+                    bookmark.isLineNumberChanged = sb.isLineNumberChanged ?? false;
+                    this.addNewDecoratedBookmark(bookmark);
+                }
+                this.bookmarks.sort(Bookmark.sortByLocation);
+            }
+
+            // Restore active group
+            if (data.activeGroup && groupMap.has(data.activeGroup)) {
+                this.activateGroup(data.activeGroup);
+            }
+
+            // Restore visibility settings
+            if (typeof data.hideInactiveGroups === 'boolean') {
+                this.hideInactiveGroups = data.hideInactiveGroups;
+            }
+            if (typeof data.hideAll === 'boolean') {
+                this.hideAll = data.hideAll;
+            }
+            this.setGroupVisibilities();
+
+            this.resetTempLists();
+            this.saveState();
+            this.updateDecorations();
+            this.treeViewRefreshCallback();
+
+            vscode.window.showInformationMessage(
+                `Bookmarks imported: ${data.bookmarks ? data.bookmarks.length : 0} bookmarks, ${data.groups ? data.groups.length : 0} groups`
+            );
+        } catch (e: any) {
+            vscode.window.showErrorMessage(`Failed to import bookmarks: ${e.message}`);
+        }
+    }
+
     public getNearestActiveBookmarkInFile(textEditor: TextEditor, group: Group | null): Bookmark | null {
         if (textEditor.selections.length === 0) {
             return null;

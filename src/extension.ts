@@ -96,6 +96,16 @@ export function activate(context: ExtensionContext) {
 		() => main.actionMoveBookmarksFromActiveGroup());
 	context.subscriptions.push(disposable);
 
+	disposable = vscode.commands.registerCommand(
+		'vsc-labeled-bookmarks.exportBookmarks',
+		() => main.actionExportBookmarks());
+	context.subscriptions.push(disposable);
+
+	disposable = vscode.commands.registerCommand(
+		'vsc-labeled-bookmarks.importBookmarks',
+		() => main.actionImportBookmarks());
+	context.subscriptions.push(disposable);
+
 	disposable = vscode.commands.registerTextEditorCommand(
 		'vsc-labeled-bookmarks.expandSelectionToNextBookmark',
 		(textEditor) => main.actionExpandSelectionToNextBookmark(textEditor));

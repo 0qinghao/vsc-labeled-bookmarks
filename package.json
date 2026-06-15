@@ -112,6 +112,14 @@
         "title": "Bookmarks: move bookmarks"
       },
       {
+        "command": "vsc-labeled-bookmarks.exportBookmarks",
+        "title": "Bookmarks: export bookmarks"
+      },
+      {
+        "command": "vsc-labeled-bookmarks.importBookmarks",
+        "title": "Bookmarks: import bookmarks"
+      },
+      {
         "command": "vsc-labeled-bookmarks.activateTreeItem",
         "title": "Activate bookmark tree item",
         "icon": "$(eye)"
@@ -209,6 +217,14 @@
       {
         "command": "vsc-labeled-bookmarks.moveBookmarksFromActiveGroup",
         "key": "ctrl+alt+b m"
+      },
+      {
+        "command": "vsc-labeled-bookmarks.exportBookmarks",
+        "key": "ctrl+alt+b e"
+      },
+      {
+        "command": "vsc-labeled-bookmarks.importBookmarks",
+        "key": "ctrl+alt+b r"
       }
     ],
     "configuration": {
